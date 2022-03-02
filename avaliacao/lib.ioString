@@ -1,0 +1,312 @@
+section .bss
+	digitSpace resb 100
+	digitSpacePos resb 8
+
+segment .data
+LF          equ 0xA ; Line Feed
+NULL        equ 0xD ; End of string
+SYS_CALL    equ 0x80 ; System Call
+;EAX
+SYS_EXIT    equ 0x1 ; Call to exit
+SYS_READ    equ 0x3 ; Operation of read
+SYS_WRITE   equ 0x4 ; Operation of write
+;EBX
+RET_EXIT    equ 0x0 ; Operation sucessfully finished
+STD_IN      equ 0x0 ; Entrada Padrao
+STD_OUT     equ 0x1 ; Saída Padrao
+
+section .text
+
+exit:
+  	mov rax, 60
+  	xor rdi, rdi
+  	syscall
+
+; ----------------------------------------------------
+; Função que calcula o tamanho da string de entrada
+str_length:
+  	xor rax, rax	; rax = 0
+
+    ; o laço principal começa aqui
+.str_length_loop:
+			
+  	; Verifica se o símbolo atual é o finalizador (nulo).
+  	cmp byte [rdi+rax], 0 				
+  	jz .str_length_end 	; Jump se o finalizador nulo foi encontrado
+  						; Caso contrário, vai para o próximo símbolo
+  	inc rax  			; e incrementa o contador
+  
+  	jmp .str_length_loop
+.str_length_end:
+  	ret	
+
+; ----------------------------------------------------
+; imprime uma string
+print_string:
+  	push rdi
+  	call str_length ; retorna o tamanho da string
+  
+  	pop rsi		 ; endereço (contéudo de saída)
+  	mov rdx, rax ; tamanho da string
+  	mov rax, 1	 ; system call de escrita (write syscall)
+  	mov rdi, 1	 ; descritor (1 - para stdout)
+  	syscall		 ; chamada de sistema (write)
+  	ret
+
+; ----------------------------------------------------
+; exibi na saida padrão um caractere
+print_char:
+    push rdi
+    mov rdi, rsp ; rdi deve ser o local memória do inicio da string 
+    call print_string
+    pop rdi
+    ret
+
+; ----------------------------------------------------
+; imprime uma nova linha na saida padrão
+print_newline:
+  	push 10
+  	mov rax, 1   ; identificador da syscall 'write'
+  	mov rdi, 1   ; descritor do arquivo stdout
+  	mov rsi, rsp ; local de onde os dados são obtidos
+  	mov rdx, 1   ; quantidade de bytes a ser escrita
+  	syscall
+  	pop rax
+  	xor rax, rax
+  	ret
+
+; ----------------------------------------------------
+; ler um char e retorna-o no RAX
+read_char:
+    xor rax, rax  ; 0 é a id da system call read (syscall number)
+    mov rdi, 0    ; 0 é descritor de arquivo para entrada padrão (stdin)
+    push 0        ; aloca 8 bytes na pilha
+    mov rsi, rsp  ; buffer (endereço)
+    mov rdx, 1    ; read one byte
+    syscall
+    
+    pop rax
+    ret
+
+; ----------------------------------------------------
+; ler uma palavra e retorna o endereço do inicio 
+; da palavra em RAX.
+;
+; # Finalidade dos registradores
+; 	* rdi - endereço do inicio da palavra (address of buffer)
+; 	* rsi - tamanho da palavra (size of buffer)
+; 	* rax - 1. returna 0 se palavra é maior que tamanho 
+;			   definido em rsi;
+;			2. returna o endereço da palavra se o tamanho da
+;			   palavra de entrada se ajusta ao tamanho definido
+;
+; # Observações:
+; 	A leitura inicial da palavra ingora todos os tipos de espaço 
+;	em branco até que se encontre um caracter que não seja espaço
+;	em branco, então, se qualquer outro espaço em branco for 
+;	inserido a leitura de caracter é terminada e um caracter nulo
+;	é inserido. E o endereço da palavra é retornado
+read_word:
+    mov rbx, rsi  ; copia o tamanho do buffer para rbx
+    xor rcx, rcx  ; inicializa o contador
+    dec rbx       ; ajusta o tamanho da palavra para 
+				  ; comportar o caracter nulo (terminador)
+				  ; decrementa o tamanho do buffer em uma unidade
+
+.read_word_find_word:
+    push rdi	; endereço da palavra
+    push rbx	; tamanho do buffer
+    push rcx	; contador do tamanho da palavra
+    call read_char
+    pop rcx
+    pop rbx
+    pop rdi
+    ; o caracter é retornado para o registrador rax
+	; no entanto, o tamanho do char é um byte (8 bits) 
+	; de 4 bytes do rax, portanto, pode se usar apenas 
+	; um segmento do registrador o al do rax 
+	; [rax (al)]
+	
+	; verificação de ocorrência de espaço em branco:
+	; 	- Tabulação (Tab), nova linha (line feed, carriage return),
+	; 	  espaço (space), Nulo (NULL)
+    cmp al, 0x09       ; tab
+    je .read_word_find_word
+    cmp al, 0x0A       ; line feed
+    je .read_word_find_word
+    cmp al, 0x0D       ; carriage return
+    je .read_word_find_word
+    cmp al, 0x20       ; space
+    je .read_word_find_word
+    test al, al        ; null terminator
+    jz .read_word_done
+
+.read_word_letters_in_word:
+    mov byte[rdi + rcx], al	; escreve o caracter lido 
+							; em uma posição da memória
+    inc rcx	; incrementa o contador
+
+    push rdi
+    push rbx
+    push rcx
+    call read_char
+    pop rcx
+    pop rbx
+    pop rdi
+
+    cmp al, 0x09       ; tab
+    je .read_word_done
+    cmp al, 0x0A       ; line feed
+    je .read_word_done
+    cmp al, 0x0D       ; carriage return
+    je .read_word_done
+    cmp al, 0x20       ; space
+    je .read_word_done
+    test al, al        ; null terminator
+    jz .read_word_done
+	
+	; verifica se palavra lida não estourou o tamanho do buffer
+    cmp rcx, rbx       
+    je .read_word_too_long	
+
+    jmp .read_word_letters_in_word
+
+.read_word_done:
+    mov byte[rdi + rcx], 0  ; null terminate the string
+    mov rax, rdi
+    mov rdx, rcx
+    ret
+
+.read_word_too_long:
+    xor rax, rax
+    ret
+
+; ----------------------------
+; print unsigned integer!!!
+; this 'll print an unsigned integer of 8 bytes in decimal format
+; 
+print_uint:
+  mov rcx, digitSpace  ; 
+  mov rbx, 10
+  mov [rcx], rbx
+  inc rcx
+  mov [digitSpacePos], rcx
+
+print_uintLoop:
+  mov rdx, 0
+  mov rbx, 10
+  div rbx
+  push rax
+  add rdx, 48
+
+  mov rcx, [digitSpacePos]
+  mov [rcx], dl
+  inc rcx
+  mov [digitSpacePos], rcx
+
+  pop rax
+  cmp rax, 0
+  jne print_uintLoop
+
+print_uintLoop2:
+  mov rcx, [digitSpacePos]
+
+  mov rax, 1
+  mov rdi, 1
+  mov rsi, rcx
+  mov rdx, 1
+  syscall
+
+  mov rcx, [digitSpacePos]
+  dec rcx
+  mov [digitSpacePos], rcx
+
+  cmp rcx, digitSpace
+  jge print_uintLoop2
+
+  ret
+
+; ------------------------------
+; print a signed integer!!!!
+;   this will use the print_char function and the print_uint function to print a signed integer!!!!
+;
+print_int:
+    push rdi
+    mov rdi, '-'
+    call print_char
+    pop rdi
+    mov rax, rdi
+    neg rax
+    jmp print_uint
+
+; -------------------------------
+;  parse an unsigned integer!!!
+; this will accept a string finished in NULL and 'ill try to parse it in a unsigned number. the identified number will be put in rax and the character counter will be in rdx. 
+parse_uint:
+    mov r8, 10
+    xor rax, rax
+    xor rcx, rcx
+
+.loop:
+    movzx r9, byte [rdi + rcx] 
+    cmp r9b, '0'
+    jb .end
+    cmp r9b, '9'
+    ja .end
+    xor rdx, rdx 
+    mul r8
+    and r9b, 0x0f
+    add rax, r9
+    inc rcx 
+    jmp .loop 
+    .end:
+    mov rdx, rcx
+    ret
+; -----------------------------
+;  parse a signed integer!!!!
+; this will accept a string finished in NULL and 'ill try to parse it in a unsigned number. the identified number will be put in rax and the character counter will be in rdx. if there is a signal it will be put in rdx too.
+parse_int:
+    mov al, byte [rdi]
+    cmp al, '-'
+    je .signed
+    jmp parse_uint
+
+.signed:
+    inc rdi
+    call parse_uint
+    neg rax
+    test rdx, rdx
+   
+
+    inc rdx
+    ret
+
+
+; ---------------------------------
+;  string equals!!!
+; this function compares two strings and returns true if they are equivalent.
+string_equals:
+  mov al, byte [rdi]
+  cmp al, byte [rsi]
+  jne .no
+  inc rdi
+  inc rsi
+  test al, al
+  jnz string_equals
+  mov rax, 1
+  ret
+  .no:
+  xor rax, rax
+  ret
+
+; ----------------------------------
+;  copy of a string!!!
+; this function will accept 3 argments, 1 pointer to a string, another pointer to the buffer and the third argument is the size of the buffer. it copies the string to the destiny, if the address of destiny fits in the buffer the addres will be returned, if not, zero will be returned.
+string_copy:
+  mov dl, byte[rdi]
+  mov byte[rsi], dl
+  inc rdi
+  inc rsi
+  test dl, dl
+  jnz string_copy
+  ret
